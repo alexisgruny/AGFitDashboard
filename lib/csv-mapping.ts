@@ -13,10 +13,39 @@ import Papa from "papaparse";
 //
 // Fréquence cardiaque et poids (export binaire .FIT) ne sont pas supportés
 // pour l'instant : aucun modèle de données ne les stocke.
+//
+// Aucun export Samsung Health/Health Sync ne fournit les calories brûlées
+// (ni au global ni par séance) : elles sont donc estimées par formule MET,
+// faute de vraie mesure. ASSUMED_BODY_WEIGHT_KG est une valeur déclarée par
+// l'utilisateur, pas mesurée (voir aussi le fichier Poids, exclu du scope).
+const ASSUMED_BODY_WEIGHT_KG = 85;
+
+// MET (Metabolic Equivalent of Task) approximatifs par type d'activité.
+// Source : compendium MET usuel. "3.5" = marche modérée, "6" = renfo/cardio.
+const MET_BY_ACTIVITY_TYPE: Record<string, number> = {
+  WALKING: 3.5,
+  TRAINING: 6.0,
+};
+const DEFAULT_MET = 4.0;
+
+// ~0.0005 kcal par pas et par kg de poids corporel (référence usuelle des
+// calculateurs de calories pour la marche), soit ~350 kcal pour 10 000 pas
+// à 82 kg.
+const KCAL_PER_STEP_PER_KG = 0.0005;
+
+function estimateWorkoutCalories(type: string, durationMinutes: number): number {
+  const met = MET_BY_ACTIVITY_TYPE[type] ?? DEFAULT_MET;
+  return Math.round(met * ASSUMED_BODY_WEIGHT_KG * (durationMinutes / 60));
+}
+
+function estimateDailyCalories(steps: number): number {
+  return Math.round(steps * KCAL_PER_STEP_PER_KG * ASSUMED_BODY_WEIGHT_KG);
+}
 
 export interface DailyMetricEntry {
   date: Date;
   steps: number;
+  caloriesBurned: number;
 }
 
 export interface SleepSessionEntry {
@@ -33,6 +62,7 @@ export interface WorkoutEntry {
   type: string;
   durationMinutes: number;
   distanceKm: number | null;
+  caloriesBurned: number;
 }
 
 export type ParsedImportFile =
@@ -69,14 +99,16 @@ function parseWorkoutRows(rows: Record<string, string>[]): WorkoutEntry[] {
     if (Number.isNaN(date.getTime())) continue;
 
     const activeSeconds = Number(row["Temps actif"]) || 0;
+    const durationMinutes = Math.round(activeSeconds / 60);
     const distanceValue = row["Distance (km)"];
     const distanceKm = distanceValue !== undefined && distanceValue !== "" ? Number(distanceValue) : null;
 
     entries.push({
       date,
       type,
-      durationMinutes: Math.round(activeSeconds / 60),
+      durationMinutes,
       distanceKm: distanceKm !== null && Number.isFinite(distanceKm) ? distanceKm : null,
+      caloriesBurned: estimateWorkoutCalories(type, durationMinutes),
     });
   }
   return entries;
@@ -101,7 +133,11 @@ function parseStepsRows(rows: Record<string, string>[]): DailyMetricEntry[] {
     }
   }
 
-  return Array.from(totalsByDay.values());
+  return Array.from(totalsByDay.values()).map(({ date, steps }) => ({
+    date,
+    steps,
+    caloriesBurned: estimateDailyCalories(steps),
+  }));
 }
 
 interface SleepSegment {

@@ -11,7 +11,7 @@ export default function WorkoutsTable({ data }: { data: WorkoutDto[] }) {
               <th className="py-2 pr-4">Date</th>
               <th className="py-2 pr-4">Type</th>
               <th className="py-2 pr-4">Durée (min)</th>
-              <th className="py-2 pr-4">Calories</th>
+              <th className="py-2 pr-4">Calories (est.)</th>
               <th className="py-2 pr-4">FC moy.</th>
               <th className="py-2 pr-4">Distance (km)</th>
             </tr>

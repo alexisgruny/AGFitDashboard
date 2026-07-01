@@ -31,10 +31,11 @@ export async function POST(request: NextRequest) {
 
     if (parsed.kind === "steps") {
       for (const entry of parsed.entries) {
+        const data = { steps: entry.steps, caloriesBurned: entry.caloriesBurned };
         await prisma.dailyMetric.upsert({
           where: { date: entry.date },
-          update: { steps: entry.steps },
-          create: { date: entry.date, steps: entry.steps },
+          update: data,
+          create: { date: entry.date, ...data },
         });
         dailyMetricsImported += 1;
       }
@@ -60,7 +61,11 @@ export async function POST(request: NextRequest) {
 
     if (parsed.kind === "workout") {
       for (const entry of parsed.entries) {
-        const data = { durationMinutes: entry.durationMinutes, distanceKm: entry.distanceKm };
+        const data = {
+          durationMinutes: entry.durationMinutes,
+          distanceKm: entry.distanceKm,
+          caloriesBurned: entry.caloriesBurned,
+        };
         await prisma.workout.upsert({
           where: { date_type_unique: { date: entry.date, type: entry.type } },
           update: data,
