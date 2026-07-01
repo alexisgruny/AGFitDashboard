@@ -24,6 +24,9 @@
 .DS_Store
 *.pem
 
+# personal health data exports (never commit)
+/CSV/
+
 # debug
 npm-debug.log*
 yarn-debug.log*
@@ -39,3 +42,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+.vercel
+
+.env*

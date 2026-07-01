@@ -1,102 +1,195 @@
-// TODO: format Samsung Health réel inconnu à ce stade. Ce mapping utilise un
-// format CSV générique documenté ci-dessous. Une fois un vrai export Samsung
-// Health obtenu, ajuster les noms de colonnes (CSV_COLUMNS) et au besoin la
-// logique de parsing des dates/durées dans ce fichier uniquement.
+import Papa from "papaparse";
+
+// Formats réels observés dans les exports Samsung Health (via Health Sync).
+// Chaque export est un fichier CSV distinct par type de donnée, détecté par
+// ses en-têtes (les noms de fichiers ne sont pas fiables à 100%).
 //
-// Format générique attendu (une ligne = un jour, colonnes optionnelles sauf `date`) :
-// date, steps, calories_burned, distance_km,
-// sleep_duration_minutes, sleep_deep_minutes, sleep_light_minutes, sleep_rem_minutes, sleep_awake_minutes,
-// workout_type, workout_duration_minutes, workout_calories, workout_avg_heart_rate, workout_distance_km
+// - Entraînement (1 ligne par séance) :
+//   Application source,Type d'activité,Nom de l'activité,Date,Heure,Temps écoulé,Temps actif,Distance (km)
+// - Pas (plusieurs points par jour, à sommer) :
+//   Date,Heure,Pas
+// - Sommeil (segments par phase, à regrouper en sessions puis sommer) :
+//   Date,Heure,Durée en secondes,Phase de sommeil
+//
+// Fréquence cardiaque et poids (export binaire .FIT) ne sont pas supportés
+// pour l'instant : aucun modèle de données ne les stocke.
 
-export interface CsvRow {
-  date: string;
-  steps?: string;
-  calories_burned?: string;
-  distance_km?: string;
-  sleep_duration_minutes?: string;
-  sleep_deep_minutes?: string;
-  sleep_light_minutes?: string;
-  sleep_rem_minutes?: string;
-  sleep_awake_minutes?: string;
-  workout_type?: string;
-  workout_duration_minutes?: string;
-  workout_calories?: string;
-  workout_avg_heart_rate?: string;
-  workout_distance_km?: string;
-}
-
-export interface MappedData {
+export interface DailyMetricEntry {
   date: Date;
-  dailyMetric?: { steps: number; caloriesBurned: number; distanceKm: number };
-  sleepSession?: {
-    durationMinutes: number;
-    deepMinutes: number;
-    lightMinutes: number;
-    remMinutes: number;
-    awakeMinutes: number;
-  };
-  workout?: {
-    type: string;
-    durationMinutes: number;
-    caloriesBurned: number;
-    avgHeartRate: number | null;
-    distanceKm: number | null;
-  };
+  steps: number;
 }
 
-function toNumber(value: string | undefined): number {
-  if (value === undefined || value === "") return 0;
-  const n = Number(value);
-  return Number.isFinite(n) ? n : 0;
+export interface SleepSessionEntry {
+  date: Date;
+  durationMinutes: number;
+  deepMinutes: number;
+  lightMinutes: number;
+  remMinutes: number;
+  awakeMinutes: number;
 }
 
-function toNullableNumber(value: string | undefined): number | null {
-  if (value === undefined || value === "") return null;
-  const n = Number(value);
-  return Number.isFinite(n) ? n : null;
+export interface WorkoutEntry {
+  date: Date;
+  type: string;
+  durationMinutes: number;
+  distanceKm: number | null;
 }
 
-export function mapCsvRow(row: CsvRow): MappedData | null {
-  if (!row.date) return null;
-  const date = new Date(row.date);
-  if (Number.isNaN(date.getTime())) return null;
+export type ParsedImportFile =
+  | { kind: "steps"; entries: DailyMetricEntry[] }
+  | { kind: "sleep"; entries: SleepSessionEntry[] }
+  | { kind: "workout"; entries: WorkoutEntry[] }
+  | { kind: "unsupported" };
 
-  const hasDailyMetric =
-    row.steps !== undefined || row.calories_burned !== undefined || row.distance_km !== undefined;
-  const hasSleep =
-    row.sleep_duration_minutes !== undefined ||
-    row.sleep_deep_minutes !== undefined ||
-    row.sleep_light_minutes !== undefined ||
-    row.sleep_rem_minutes !== undefined ||
-    row.sleep_awake_minutes !== undefined;
-  const hasWorkout = !!row.workout_type;
+const SLEEP_SESSION_GAP_MS = 4 * 60 * 60 * 1000;
 
-  return {
-    date,
-    dailyMetric: hasDailyMetric
-      ? {
-          steps: Math.round(toNumber(row.steps)),
-          caloriesBurned: toNumber(row.calories_burned),
-          distanceKm: toNumber(row.distance_km),
-        }
-      : undefined,
-    sleepSession: hasSleep
-      ? {
-          durationMinutes: Math.round(toNumber(row.sleep_duration_minutes)),
-          deepMinutes: Math.round(toNumber(row.sleep_deep_minutes)),
-          lightMinutes: Math.round(toNumber(row.sleep_light_minutes)),
-          remMinutes: Math.round(toNumber(row.sleep_rem_minutes)),
-          awakeMinutes: Math.round(toNumber(row.sleep_awake_minutes)),
-        }
-      : undefined,
-    workout: hasWorkout
-      ? {
-          type: row.workout_type as string,
-          durationMinutes: Math.round(toNumber(row.workout_duration_minutes)),
-          caloriesBurned: toNumber(row.workout_calories),
-          avgHeartRate: toNullableNumber(row.workout_avg_heart_rate),
-          distanceKm: toNullableNumber(row.workout_distance_km),
-        }
-      : undefined,
-  };
+function parseSamsungDate(value: string): Date {
+  const [datePart, timePart] = value.trim().split(" ");
+  const [year, month, day] = datePart.split(".").map(Number);
+  const [hours, minutes, seconds] = (timePart ?? "00:00:00").split(":").map(Number);
+  return new Date(year, month - 1, day, hours, minutes, seconds ?? 0);
+}
+
+function dayKey(date: Date): string {
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+function startOfDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function parseWorkoutRows(rows: Record<string, string>[]): WorkoutEntry[] {
+  const entries: WorkoutEntry[] = [];
+  for (const row of rows) {
+    const type = row["Type d'activité"];
+    const dateValue = row["Date"];
+    if (!type || !dateValue) continue;
+
+    const date = parseSamsungDate(dateValue);
+    if (Number.isNaN(date.getTime())) continue;
+
+    const activeSeconds = Number(row["Temps actif"]) || 0;
+    const distanceValue = row["Distance (km)"];
+    const distanceKm = distanceValue !== undefined && distanceValue !== "" ? Number(distanceValue) : null;
+
+    entries.push({
+      date,
+      type,
+      durationMinutes: Math.round(activeSeconds / 60),
+      distanceKm: distanceKm !== null && Number.isFinite(distanceKm) ? distanceKm : null,
+    });
+  }
+  return entries;
+}
+
+function parseStepsRows(rows: Record<string, string>[]): DailyMetricEntry[] {
+  const totalsByDay = new Map<string, { date: Date; steps: number }>();
+
+  for (const row of rows) {
+    const dateValue = row["Date"];
+    if (!dateValue) continue;
+    const date = parseSamsungDate(dateValue);
+    if (Number.isNaN(date.getTime())) continue;
+
+    const steps = Number(row["Pas"]) || 0;
+    const key = dayKey(date);
+    const existing = totalsByDay.get(key);
+    if (existing) {
+      existing.steps += steps;
+    } else {
+      totalsByDay.set(key, { date: startOfDay(date), steps });
+    }
+  }
+
+  return Array.from(totalsByDay.values());
+}
+
+interface SleepSegment {
+  start: Date;
+  durationSeconds: number;
+  phase: string;
+}
+
+function parseSleepRows(rows: Record<string, string>[]): SleepSessionEntry[] {
+  const segments: SleepSegment[] = [];
+
+  for (const row of rows) {
+    const dateValue = row["Date"];
+    const phase = row["Phase de sommeil"];
+    if (!dateValue || !phase) continue;
+    const start = parseSamsungDate(dateValue);
+    if (Number.isNaN(start.getTime())) continue;
+
+    segments.push({
+      start,
+      durationSeconds: Number(row["Durée en secondes"]) || 0,
+      phase: phase.trim().toLowerCase(),
+    });
+  }
+
+  segments.sort((a, b) => a.start.getTime() - b.start.getTime());
+
+  const sessions: SleepSegment[][] = [];
+  for (const segment of segments) {
+    const currentSession = sessions[sessions.length - 1];
+    const previousSegment = currentSession?.[currentSession.length - 1];
+    const previousEnd = previousSegment
+      ? previousSegment.start.getTime() + previousSegment.durationSeconds * 1000
+      : null;
+
+    if (previousEnd !== null && segment.start.getTime() - previousEnd <= SLEEP_SESSION_GAP_MS) {
+      currentSession.push(segment);
+    } else {
+      sessions.push([segment]);
+    }
+  }
+
+  return sessions.map((sessionSegments) => {
+    const totals = { durationMinutes: 0, deepMinutes: 0, lightMinutes: 0, remMinutes: 0, awakeMinutes: 0 };
+    for (const segment of sessionSegments) {
+      const minutes = segment.durationSeconds / 60;
+      totals.durationMinutes += minutes;
+      if (segment.phase === "deep") totals.deepMinutes += minutes;
+      else if (segment.phase === "light") totals.lightMinutes += minutes;
+      else if (segment.phase === "rem") totals.remMinutes += minutes;
+      else if (segment.phase === "awake") totals.awakeMinutes += minutes;
+    }
+
+    // La session est rattachée au jour du réveil (dernier segment), convention
+    // usuelle des trackers de sommeil pour une nuit à cheval sur deux jours.
+    const wakeDate = sessionSegments[sessionSegments.length - 1].start;
+
+    return {
+      date: startOfDay(wakeDate),
+      durationMinutes: Math.round(totals.durationMinutes),
+      deepMinutes: Math.round(totals.deepMinutes),
+      lightMinutes: Math.round(totals.lightMinutes),
+      remMinutes: Math.round(totals.remMinutes),
+      awakeMinutes: Math.round(totals.awakeMinutes),
+    };
+  });
+}
+
+export function parseImportFile(text: string): ParsedImportFile {
+  const parsed = Papa.parse<Record<string, string>>(text, {
+    header: true,
+    skipEmptyLines: true,
+    transformHeader: (header) => header.trim(),
+  });
+
+  const fields = parsed.meta.fields ?? [];
+
+  if (fields.includes("Type d'activité") && fields.includes("Temps actif")) {
+    return { kind: "workout", entries: parseWorkoutRows(parsed.data) };
+  }
+
+  if (fields.includes("Phase de sommeil")) {
+    return { kind: "sleep", entries: parseSleepRows(parsed.data) };
+  }
+
+  if (fields.includes("Pas") && !fields.includes("Fréquence cardiaque")) {
+    return { kind: "steps", entries: parseStepsRows(parsed.data) };
+  }
+
+  return { kind: "unsupported" };
 }

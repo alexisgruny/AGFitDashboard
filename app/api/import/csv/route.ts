@@ -1,82 +1,82 @@
 import { NextRequest, NextResponse } from "next/server";
-import Papa from "papaparse";
 import { prisma } from "@/lib/prisma";
-import { mapCsvRow, type CsvRow } from "@/lib/csv-mapping";
+import { parseImportFile } from "@/lib/csv-mapping";
 
 export async function POST(request: NextRequest) {
   const formData = await request.formData();
-  const file = formData.get("file");
+  const files = formData.getAll("files").filter((f): f is File => f instanceof Blob);
 
-  if (!file || !(file instanceof Blob)) {
+  if (files.length === 0) {
     return NextResponse.json({ error: "Aucun fichier reçu." }, { status: 400 });
-  }
-
-  const text = await file.text();
-  if (!text.trim()) {
-    return NextResponse.json({ error: "Le fichier CSV est vide." }, { status: 400 });
-  }
-
-  const parsed = Papa.parse<CsvRow>(text, {
-    header: true,
-    skipEmptyLines: true,
-    transformHeader: (header) => header.trim(),
-  });
-
-  if (parsed.errors.length > 0) {
-    return NextResponse.json(
-      { error: `Format CSV invalide: ${parsed.errors[0].message}` },
-      { status: 400 }
-    );
   }
 
   let dailyMetricsImported = 0;
   let sleepSessionsImported = 0;
   let workoutsImported = 0;
-  let skippedRows = 0;
+  const unsupportedFiles: string[] = [];
 
-  for (const row of parsed.data) {
-    const mapped = mapCsvRow(row);
-    if (!mapped) {
-      skippedRows += 1;
+  for (const file of files) {
+    const text = await file.text();
+    if (!text.trim()) {
+      unsupportedFiles.push(file.name);
       continue;
     }
 
-    if (mapped.dailyMetric) {
-      await prisma.dailyMetric.upsert({
-        where: { date: mapped.date },
-        update: mapped.dailyMetric,
-        create: { date: mapped.date, ...mapped.dailyMetric },
-      });
-      dailyMetricsImported += 1;
+    const parsed = parseImportFile(text);
+
+    if (parsed.kind === "unsupported") {
+      unsupportedFiles.push(file.name);
+      continue;
     }
 
-    if (mapped.sleepSession) {
-      await prisma.sleepSession.upsert({
-        where: { date: mapped.date },
-        update: mapped.sleepSession,
-        create: { date: mapped.date, ...mapped.sleepSession },
-      });
-      sleepSessionsImported += 1;
+    if (parsed.kind === "steps") {
+      for (const entry of parsed.entries) {
+        await prisma.dailyMetric.upsert({
+          where: { date: entry.date },
+          update: { steps: entry.steps },
+          create: { date: entry.date, steps: entry.steps },
+        });
+        dailyMetricsImported += 1;
+      }
     }
 
-    if (mapped.workout) {
-      await prisma.workout.upsert({
-        where: {
-          date_type_unique: { date: mapped.date, type: mapped.workout.type },
-        },
-        update: mapped.workout,
-        create: { date: mapped.date, ...mapped.workout },
-      });
-      workoutsImported += 1;
+    if (parsed.kind === "sleep") {
+      for (const entry of parsed.entries) {
+        const data = {
+          durationMinutes: entry.durationMinutes,
+          deepMinutes: entry.deepMinutes,
+          lightMinutes: entry.lightMinutes,
+          remMinutes: entry.remMinutes,
+          awakeMinutes: entry.awakeMinutes,
+        };
+        await prisma.sleepSession.upsert({
+          where: { date: entry.date },
+          update: data,
+          create: { date: entry.date, ...data },
+        });
+        sleepSessionsImported += 1;
+      }
+    }
+
+    if (parsed.kind === "workout") {
+      for (const entry of parsed.entries) {
+        const data = { durationMinutes: entry.durationMinutes, distanceKm: entry.distanceKm };
+        await prisma.workout.upsert({
+          where: { date_type_unique: { date: entry.date, type: entry.type } },
+          update: data,
+          create: { date: entry.date, type: entry.type, ...data },
+        });
+        workoutsImported += 1;
+      }
     }
   }
 
   return NextResponse.json({
     success: true,
-    rowsProcessed: parsed.data.length,
+    filesProcessed: files.length,
     dailyMetricsImported,
     sleepSessionsImported,
     workoutsImported,
-    skippedRows,
+    unsupportedFiles,
   });
 }

@@ -35,7 +35,7 @@ model SleepSession {
 
 model Workout {
   id             Int      @id @default(autoincrement())
-  date           DateTime @db.Date
+  date           DateTime
   type           String
   durationMinutes Int     @default(0) @map("duration_minutes")
   caloriesBurned Float    @default(0) @map("calories_burned")

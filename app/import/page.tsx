@@ -3,23 +3,23 @@
 import { useState } from "react";
 
 interface ImportResult {
-  rowsProcessed: number;
+  filesProcessed: number;
   dailyMetricsImported: number;
   sleepSessionsImported: number;
   workoutsImported: number;
-  skippedRows: number;
+  unsupportedFiles: string[];
 }
 
 export default function ImportPage() {
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [result, setResult] = useState<ImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!file) {
-      setError("Sélectionnez un fichier CSV.");
+    if (files.length === 0) {
+      setError("Sélectionnez au moins un fichier CSV.");
       setStatus("error");
       return;
     }
@@ -29,7 +29,9 @@ export default function ImportPage() {
     setResult(null);
 
     const formData = new FormData();
-    formData.append("file", file);
+    for (const file of files) {
+      formData.append("files", file);
+    }
 
     try {
       const res = await fetch("/api/import/csv", { method: "POST", body: formData });
@@ -51,15 +53,17 @@ export default function ImportPage() {
     <div className="max-w-lg mx-auto space-y-6">
       <h1 className="text-xl font-bold">Importer un export Samsung Health</h1>
       <p className="text-sm text-gray-500">
-        Format CSV générique attendu (voir <code>lib/csv-mapping.ts</code> pour les colonnes exactes et le TODO
-        de mapping une fois un vrai export Samsung Health disponible).
+        Sélectionne les fichiers CSV exportés (pas, sommeil, entraînements). Chaque fichier est
+        reconnu automatiquement par ses colonnes. Fréquence cardiaque et poids ne sont pas encore
+        supportés.
       </p>
 
       <form onSubmit={handleSubmit} className="space-y-4 bg-white border border-gray-200 rounded-lg p-4">
         <input
           type="file"
           accept=".csv"
-          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+          multiple
+          onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
           className="block w-full text-sm"
         />
         <button
@@ -74,11 +78,13 @@ export default function ImportPage() {
       {status === "success" && result && (
         <div className="bg-green-50 border border-green-200 text-green-800 rounded-md p-4 text-sm space-y-1">
           <p className="font-semibold">Import réussi.</p>
-          <p>Lignes traitées : {result.rowsProcessed}</p>
+          <p>Fichiers traités : {result.filesProcessed}</p>
           <p>Métriques quotidiennes : {result.dailyMetricsImported}</p>
           <p>Sessions de sommeil : {result.sleepSessionsImported}</p>
           <p>Entraînements : {result.workoutsImported}</p>
-          {result.skippedRows > 0 && <p>Lignes ignorées (date invalide) : {result.skippedRows}</p>}
+          {result.unsupportedFiles.length > 0 && (
+            <p>Fichiers ignorés (format non supporté) : {result.unsupportedFiles.join(", ")}</p>
+          )}
         </div>
       )}
 
