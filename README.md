@@ -1,36 +1,28 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AGFitDashboard
 
-## Getting Started
+Dashboard fitness personnel (Phase 1 / MVP) alimenté par export CSV manuel de Samsung Health.
 
-First, run the development server:
+Stack : Next.js 14 (App Router) + TypeScript strict, PostgreSQL via Prisma, Tailwind CSS, Recharts.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## Démarrage local
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+1. Configurer `DATABASE_URL` dans `.env` (une base PostgreSQL doit être joignable).
+2. Appliquer la migration : `npx prisma migrate deploy` (ou `npx prisma migrate dev` en dev).
+3. `npm install`
+4. `npm run dev` puis ouvrir [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Pages
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- `/dashboard` : pas quotidiens (barres), calories (ligne), sommeil par phase (aires empilées), historique des entraînements (tableau). Sélecteur 7j/30j/90j.
+- `/import` : upload CSV, feedback succès/erreur + nombre de lignes importées.
+- `/goals` : CRUD objectifs personnels avec barre de progression.
 
-## Learn More
+## Import CSV
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Le format Samsung Health réel n'était pas disponible lors de l'implémentation. Un format CSV
+générique documenté est utilisé en attendant (voir `lib/csv-mapping.ts`, marqué `TODO`) :
+une ligne par jour, colonnes `date, steps, calories_burned, distance_km,
+sleep_duration_minutes, sleep_deep_minutes, sleep_light_minutes, sleep_rem_minutes,
+sleep_awake_minutes, workout_type, workout_duration_minutes, workout_calories,
+workout_avg_heart_rate, workout_distance_km`. Ajuster le mapping dans ce fichier une fois un
+vrai export Samsung Health en main.

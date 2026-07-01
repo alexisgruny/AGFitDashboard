@@ -1,0 +1,60 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model DailyMetric {
+  id             Int      @id @default(autoincrement())
+  date           DateTime @unique @db.Date
+  steps          Int      @default(0)
+  caloriesBurned Float    @default(0) @map("calories_burned")
+  distanceKm     Float    @default(0) @map("distance_km")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@map("daily_metrics")
+}
+
+model SleepSession {
+  id             Int      @id @default(autoincrement())
+  date           DateTime @unique @db.Date
+  durationMinutes Int     @default(0) @map("duration_minutes")
+  deepMinutes    Int      @default(0) @map("deep_minutes")
+  lightMinutes   Int      @default(0) @map("light_minutes")
+  remMinutes     Int      @default(0) @map("rem_minutes")
+  awakeMinutes   Int      @default(0) @map("awake_minutes")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@map("sleep_sessions")
+}
+
+model Workout {
+  id             Int      @id @default(autoincrement())
+  date           DateTime @db.Date
+  type           String
+  durationMinutes Int     @default(0) @map("duration_minutes")
+  caloriesBurned Float    @default(0) @map("calories_burned")
+  avgHeartRate   Int?     @map("avg_heart_rate")
+  distanceKm     Float?   @map("distance_km")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@unique([date, type], name: "date_type_unique")
+  @@map("workouts")
+}
+
+model Goal {
+  id           Int       @id @default(autoincrement())
+  type         String
+  targetValue  Float     @map("target_value")
+  targetDate   DateTime? @db.Date @map("target_date")
+  currentValue Float     @default(0) @map("current_value")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  @@map("goals")
+}
